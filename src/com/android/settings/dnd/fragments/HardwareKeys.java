@@ -9,9 +9,9 @@ import android.content.pm.ResolveInfo;
 import android.content.res.Resources;
 import android.content.Intent;
 import android.os.Bundle;
-import android.os.Handler;
 import android.os.RemoteException;
 import android.os.SystemProperties;
+import android.os.UserHandle;
 import android.provider.Settings;
 import android.support.v14.preference.SwitchPreference;
 import android.support.v7.preference.ListPreference;
@@ -26,6 +26,8 @@ import android.view.KeyEvent;
 import android.view.WindowManagerGlobal;
 
 import com.android.internal.logging.MetricsProto.MetricsEvent;
+import com.android.internal.utils.du.ActionConstants;
+import com.android.internal.utils.du.DUActionUtils;
 import com.android.settings.DevelopmentSettings;
 import com.android.settings.R;
 import com.android.settings.SettingsPreferenceFragment;
@@ -39,16 +41,12 @@ import java.util.List;
 
 import org.cyanogenmod.internal.util.ScreenType;
 
-import static android.provider.Settings.Secure.CAMERA_DOUBLE_TAP_POWER_GESTURE_DISABLED;
-
-public class HardwareKeys extends SettingsPreferenceFragment
+public class HardwareKeys extends ActionFragment
         implements Preference.OnPreferenceChangeListener {
 
     private static final String TAG = "SystemSettings";
 
     private static final String KEY_BUTTON_BACKLIGHT = "button_backlight";
-    private static final String KEY_HOME_LONG_PRESS = "hardware_keys_home_long_press";
-    private static final String KEY_HOME_DOUBLE_TAP = "hardware_keys_home_double_tap";
     private static final String KEY_MENU_PRESS = "hardware_keys_menu_press";
     private static final String KEY_MENU_LONG_PRESS = "hardware_keys_menu_long_press";
     private static final String KEY_ASSIST_PRESS = "hardware_keys_assist_press";
@@ -61,8 +59,7 @@ public class HardwareKeys extends SettingsPreferenceFragment
     private static final String KEY_HOME_ANSWER_CALL = "home_answer_call";
     private static final String KEY_VOLUME_MUSIC_CONTROLS = "volbtn_music_controls";
     private static final String KEY_VOLUME_CONTROL_RING_STREAM = "volume_keys_control_ring_stream";
-    private static final String KEY_CAMERA_DOUBLE_TAP_POWER_GESTURE
-            = "camera_double_tap_power_gesture";
+    private static final String HWKEY_DISABLE = "hardware_keys_disable";
 
     private static final String CATEGORY_POWER = "power_key";
     private static final String CATEGORY_HOME = "home_key";
@@ -73,6 +70,7 @@ public class HardwareKeys extends SettingsPreferenceFragment
     private static final String CATEGORY_CAMERA = "camera_key";
     private static final String CATEGORY_VOLUME = "volume_keys";
     private static final String CATEGORY_BACKLIGHT = "key_backlight";
+    private static final String CATEGORY_HWKEY = "hardware_keys";
 
     // Available custom actions to perform on a key press.
     // Must match values for KEY_HOME_LONG_PRESS_ACTION in:
@@ -111,8 +109,6 @@ public class HardwareKeys extends SettingsPreferenceFragment
     public static final int KEY_MASK_CAMERA = 0x20;
     public static final int KEY_MASK_VOLUME = 0x40;
 
-    private ListPreference mHomeLongPressAction;
-    private ListPreference mHomeDoubleTapAction;
     private ListPreference mMenuPressAction;
     private ListPreference mMenuLongPressAction;
     private ListPreference mAssistPressAction;
@@ -128,9 +124,7 @@ public class HardwareKeys extends SettingsPreferenceFragment
     private SwitchPreference mSwapVolumeButtons;
     private SwitchPreference mPowerEndCall;
     private SwitchPreference mHomeAnswerCall;
-    private SwitchPreference mCameraDoubleTapPowerGesture;
-
-    private Handler mHandler;
+    private SwitchPreference mHwKeyDisable;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -185,30 +179,28 @@ public class HardwareKeys extends SettingsPreferenceFragment
         // Power button ends calls.
         mPowerEndCall = (SwitchPreference) findPreference(KEY_POWER_END_CALL);
 
-        // Double press power to launch camera.
-        mCameraDoubleTapPowerGesture
-                    = (SwitchPreference) findPreference(KEY_CAMERA_DOUBLE_TAP_POWER_GESTURE);
-
         // Home button answers calls.
         mHomeAnswerCall = (SwitchPreference) findPreference(KEY_HOME_ANSWER_CALL);
 
-        mHandler = new Handler();
+        final boolean needsNavbar = DUActionUtils.hasNavbarByDefault(getActivity());
+        final PreferenceCategory hwkeyCat = (PreferenceCategory) prefScreen
+                .findPreference(CATEGORY_HWKEY);
+        int keysDisabled = 0;
+        if (!needsNavbar) {
+            mHwKeyDisable = (SwitchPreference) findPreference(HWKEY_DISABLE);
+            keysDisabled = Settings.Secure.getIntForUser(resolver,
+                    Settings.Secure.HARDWARE_KEYS_DISABLE, 0,
+                    UserHandle.USER_CURRENT);
+            mHwKeyDisable.setChecked(keysDisabled != 0);
+            mHwKeyDisable.setOnPreferenceChangeListener(this);
+        } else {
+            prefScreen.removePreference(hwkeyCat);
+        }
 
         if (hasPowerKey) {
             if (!TelephonyUtils.isVoiceCapable(getActivity())) {
                 powerCategory.removePreference(mPowerEndCall);
                 mPowerEndCall = null;
-            }
-            if (mCameraDoubleTapPowerGesture != null &&
-                    isCameraDoubleTapPowerGestureAvailable(getResources())) {
-                // Update double tap power to launch camera if available.
-                mCameraDoubleTapPowerGesture.setOnPreferenceChangeListener(this);
-                int cameraDoubleTapPowerDisabled = Settings.Secure.getInt(
-                        getContentResolver(), CAMERA_DOUBLE_TAP_POWER_GESTURE_DISABLED, 0);
-                mCameraDoubleTapPowerGesture.setChecked(cameraDoubleTapPowerDisabled == 0);
-            } else {
-                powerCategory.removePreference(mCameraDoubleTapPowerGesture);
-                mCameraDoubleTapPowerGesture = null;
             }
         } else {
             prefScreen.removePreference(powerCategory);
@@ -223,22 +215,6 @@ public class HardwareKeys extends SettingsPreferenceFragment
                 homeCategory.removePreference(mHomeAnswerCall);
                 mHomeAnswerCall = null;
             }
-
-            Action defaultLongPressAction = Action.fromIntSafe(res.getInteger(
-                    com.android.internal.R.integer.config_longPressOnHomeBehavior));
-
-            Action defaultDoubleTapAction = Action.fromIntSafe(res.getInteger(
-                    com.android.internal.R.integer.config_doubleTapOnHomeBehavior));
-
-            Action longPressAction = Action.fromSettings(resolver,
-                    CMSettings.System.KEY_HOME_LONG_PRESS_ACTION,
-                    defaultLongPressAction);
-            mHomeLongPressAction = initActionList(KEY_HOME_LONG_PRESS, longPressAction);
-
-            Action doubleTapAction = Action.fromSettings(resolver,
-                    CMSettings.System.KEY_HOME_DOUBLE_TAP_ACTION,
-                    defaultDoubleTapAction);
-            mHomeDoubleTapAction = initActionList(KEY_HOME_DOUBLE_TAP, doubleTapAction);
 
             hasAnyBindableKey = true;
         } else {
@@ -331,6 +307,11 @@ public class HardwareKeys extends SettingsPreferenceFragment
                 volumeCategory.removePreference(findPreference(CMSettings.System.VOLUME_WAKE_SCREEN));
             }
 
+            if (!TelephonyUtils.isVoiceCapable(getActivity())) {
+                volumeCategory.removePreference(
+                        findPreference(CMSettings.System.VOLUME_ANSWER_CALL));
+            }
+
             int cursorControlAction = Settings.System.getInt(resolver,
                     Settings.System.VOLUME_KEY_CURSOR_CONTROL, 0);
             mVolumeKeyCursorControl = initActionList(KEY_VOLUME_KEY_CURSOR_CONTROL,
@@ -368,6 +349,12 @@ public class HardwareKeys extends SettingsPreferenceFragment
                 mVolumeWakeScreen.setDisableDependentsState(true);
             }
         }
+
+        // let super know we can load ActionPreferences
+        onPreferenceScreenLoaded(ActionConstants.getDefaults(ActionConstants.HWKEYS));
+
+        // load preferences first
+        setActionPreferencesEnabled(keysDisabled == 0);
     }
 
     @Override
@@ -412,27 +399,19 @@ public class HardwareKeys extends SettingsPreferenceFragment
         String value = (String) newValue;
         int index = pref.findIndexOfValue(value);
         pref.setSummary(pref.getEntries()[index]);
-        CMSettings.System.putInt(getContentResolver(), setting, Integer.valueOf(value));
+        CMSettings.System.putInt(getContentResolver(), setting, Integer.parseInt(value));
     }
 
     private void handleSystemActionListChange(ListPreference pref, Object newValue, String setting) {
         String value = (String) newValue;
         int index = pref.findIndexOfValue(value);
         pref.setSummary(pref.getEntries()[index]);
-        Settings.System.putInt(getContentResolver(), setting, Integer.valueOf(value));
+        Settings.System.putInt(getContentResolver(), setting, Integer.parseInt(value));
     }
 
     @Override
     public boolean onPreferenceChange(Preference preference, Object newValue) {
-        if (preference == mHomeLongPressAction) {
-            handleActionListChange(mHomeLongPressAction, newValue,
-                    CMSettings.System.KEY_HOME_LONG_PRESS_ACTION);
-            return true;
-        } else if (preference == mHomeDoubleTapAction) {
-            handleActionListChange(mHomeDoubleTapAction, newValue,
-                    CMSettings.System.KEY_HOME_DOUBLE_TAP_ACTION);
-            return true;
-        } else if (preference == mMenuPressAction) {
+        if (preference == mMenuPressAction) {
             handleActionListChange(mMenuPressAction, newValue,
                     CMSettings.System.KEY_MENU_ACTION);
             return true;
@@ -460,10 +439,11 @@ public class HardwareKeys extends SettingsPreferenceFragment
             handleSystemActionListChange(mVolumeKeyCursorControl, newValue,
                     Settings.System.VOLUME_KEY_CURSOR_CONTROL);
             return true;
-        } else if (preference == mCameraDoubleTapPowerGesture) {
+        } else if (preference == mHwKeyDisable) {
             boolean value = (Boolean) newValue;
-            Settings.Secure.putInt(getContentResolver(), CAMERA_DOUBLE_TAP_POWER_GESTURE_DISABLED,
-                    value ? 0 : 1 /* Backwards because setting is for disabling */);
+            Settings.Secure.putInt(getContentResolver(), Settings.Secure.HARDWARE_KEYS_DISABLE,
+                    value ? 1 : 0);
+            setActionPreferencesEnabled(!value);
             return true;
         }
         return false;
@@ -501,9 +481,9 @@ public class HardwareKeys extends SettingsPreferenceFragment
                         : CMSettings.Secure.RING_HOME_BUTTON_BEHAVIOR_DO_NOTHING));
     }
 
-    private static boolean isCameraDoubleTapPowerGestureAvailable(Resources res) {
-        return res.getBoolean(
-                com.android.internal.R.bool.config_cameraDoubleTapPowerGestureEnabled);
+    @Override
+    protected boolean usesExtendedActionsList() {
+        return true;
     }
 
     @Override
@@ -511,3 +491,4 @@ public class HardwareKeys extends SettingsPreferenceFragment
         return MetricsEvent.REDEFINITION;
     }
 }
+
