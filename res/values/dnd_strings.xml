@@ -597,6 +597,10 @@
     <string name="force_authorize_substratum_packages_title">Allow theme apps from unknown sources</string>
     <string name="force_authorize_substratum_packages_summary">Force authorize every theme app</string>
 
+    <!-- Disable animations -->
+    <string name="disable_animations">Disable animations</string>
+    <string name="disable_animations_summary">Disables transition animations such as when launching an app</string>
+
     <!-- AOKP System Animations -->
     <string name="system_animation_title">System animations</string>
     <string name="activity_open_title">Activity open animation</string>
