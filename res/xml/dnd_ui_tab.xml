@@ -18,6 +18,13 @@
     android:layout="@layout/tab"
     xmlns:settings="http://schemas.android.com/apk/res/com.android.settings" >
 
+        <!-- Animations -->
+      <PreferenceScreen
+            android:key="system_animation"
+            android:title="@string/dnd_animation_title"
+            android:summary="@string/animation_summary"
+            android:fragment="com.android.settings.dnd.fragments.Animations" />
+
 	<!-- Notification drawer -->
       <PreferenceScreen
             android:id="@+id/notification_drawer_settings"
